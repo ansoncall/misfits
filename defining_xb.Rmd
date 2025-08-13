@@ -1,37 +1,168 @@
 ---
-title: "What counts as cross-boundary?"
-author: "Anson Call"
-date: "`r Sys.Date()`"
+title: "What counts as cross-boundary?" 
+author: "Anson Call" 
+date: "`r Sys.Date()`" 
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+# load packages ####
+library(tidyverse)
+library(mapview)
+library(sf)
+library(magrittr)
+library(spatialEco)
 ```
 
-## TODO
+# Intro
 
-  - get all the raw data into the ```raw/``` folder DONE
-    - fuel treatments from Colorado Forest Tracker
-    - Conserved areas from COMaP
-    - anything else? 
-  - define a sensible subset to test code with
-  - 
+In this document, we explore how to define "cross-boundary" treatments. Two main issues arise: buffer size and the choice of CoMAP layer. What follows is a step-by-step walk through of these issues, using data from Larimer County, Colorado as an example. The comple R code is shown for those interested, but you can skip the code and still follow along with the discussion.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Load the raw data 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+The data we will use includes:
+  - Conservation status from COMaP
+    - "Manager Detail" - attribute that contains specific information on the managing entity (e.g. "Routt NF", "Boulder City Parks")
+    - "Legend" - attribute that contains general information on the conservation status (e.g. "National Forest", "State Park", "Private")
+  - Treatments from Colorado Forest Tracker
 
-```{r cars}
-summary(cars)
+```{r load-data, warning=FALSE, message=FALSE}
+# load data ####
+# fuel treatments
+treatments_raw <- st_read("raw/LarimerCoTreatments.gdb", fid_column_name = "OBJECTID")
+treatments_raw %<>% st_make_valid
+# conservation areas
+comap_legend <- st_read("raw/misfits.gdb", layer = "COMaP_LarimerCo_Legend")
+comap_manager_detail <- st_read("raw/misfits.gdb", layer = "COMaP_LarimerCo_Manager")
 ```
 
-## Including Plots
+# Buffer size 
 
-You can also embed plots, for example:
+Because the CoMAP and treatment boundaries are not exact,
+treatments can appear to be "cross-boundary" simply because of geolocation
+error. This happens when a treatment mistakenly "spills over" a CoMAP boundary,
+intersecting with multiple CoMAP types. For example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+![](images/xb_by_legend_FALSE_geo_error.png)
+
+To avoid this, we need to define a "negative buffer" that moves the boundaries
+of treatments inward by a set amout. The more negative the buffer, the less risk
+of Type  1 or false-positive cross-boundary treatments. The less negative the
+buffer, the more risk of Type 2 or false-negative cross-boundary treatments.
+We tested out different buffer sizes across the two possible CoMAP layers,
+"Legend Detail" and "Manager Detail".
+
+```{r buffer-size}
+# function to count cross-boundary treatments across different buffer sizes
+count_xb <- function (treatments, comap_lines, buffer_distance) {
+  # step 1. buffer treatments by a negative buffer_distance
+  treatments_buffered <- st_buffer(treatments_raw, dist = buffer_distance)
+  # step 2. identify which *buffered* treatments intersect comap boundaries
+  treatments_comap <- st_intersection(treatments_buffered,
+                                      comap_lines)
+  # step 3. identify which polygons in the original, *unbuffered* treatments
+  # intersected a comap boundary
+  treatments_comap_polys <- treatments_buffered %>%
+    filter(OBJECTID %in% treatments_comap$OBJECTID)
+  # step 4. count the number of treatments and return the result
+  n_xb <- nrow(treatments_comap_polys)
+  return(n_xb)
+}
+# create a dataframe that contains a column of different buffer distances to
+# test
+legend_manager_comp <- tibble(buffer_distance = seq(from = -100,
+                                                    to = -0,
+                                                    by = 2))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+For this to work, we need to see if a (buffered) treatment intersects the
+*boundary* of a CoMAP layer. So, we need to create polyline versions of the
+CoMAP layers.
+
+```{r make-line-layers}
+# convert comap to lines
+# make lines for COMaP "Legend" attribute
+comap_legend_lines <- st_cast(comap_legend, "MULTIPOLYGON") %>%
+  st_cast("MULTILINESTRING")
+# make lines for COMaP "Manager Detail" attribute
+comap_manager_lines <- st_cast(comap_manager_detail, "MULTIPOLYGON") %>%
+  st_cast("MULTILINESTRING")
+```
+
+Now, we can apply the function across both CoMAP layers and the different buffer
+sizes.
+
+```{r apply-buffer-size, warning=FALSE}
+legend_manager_comp$xb_count_legend <- map_dbl(
+  legend_manager_comp$buffer_distance,
+  \(x) count_xb(treatments_raw, comap_legend_lines, x)
+  )
+legend_manager_comp$xb_count_manager <- map_dbl(
+  legend_manager_comp$buffer_distance,
+  \(x) count_xb(treatments_raw, comap_manager_lines, x)
+)
+head(legend_manager_comp)
+```
+
+Finally, we can plot the result:
+
+```{r plot-buffer-size}
+# plot the results
+ggplot(legend_manager_comp, aes(x = buffer_distance)) +
+  geom_line(aes(y = xb_count_legend, color = "Legend")) +
+  geom_line(aes(y = xb_count_manager, color = "Manager Detail")) +
+  geom_point(aes(y = xb_count_legend, color = "Legend")) +
+  geom_point(aes(y = xb_count_manager, color = "Manager Detail")) +
+  labs(title = "Cross-boundary treatments by buffer distance",
+       x = "Buffer distance (m)",
+       y = "Number of cross-boundary treatments, Larimer Co.",
+       color = "COMaP Layer") +
+  theme_minimal() +
+  geom_vline(xintercept = -15, linetype = "dashed", color = "red") +
+  annotate("text", x = -15, y = 500, label = "-15m buffer", 
+           color = "red", vjust = -1, angle = 90) +
+  theme(legend.position = "bottom")
+```
+
+# Discussion 
+
+## Buffer Size
+In the above plot, you can see that the number of treatments identified as "cross-boundary" is highly dependent on the buffer size. More negative buffers result in fewer cross-boundary treatments, while less negative buffers result in more cross-boundary treatments. The dashed red line at -15 meters marks the inflection point where type 1 and type 2 errors appear to be roughly in balance. This is our recommended buffer size. 
+
+## CoMAP Layer
+CoMAP is by far the best source of information on conservation areas in Colorado, and is definitely the best source for identifying "cross-boundary" treatments. There are many attributes that can be used to group the polygons of this layer; the two most sensible options and the two we focused on here are "Legend" and "Manager Detail".
+
+- **Legend** is an attribute that was created for the sole purpose of mapmaking, but it happens to reflect our notion of what should count as "cross-boundary" relatively well. 
+
+```{r legend-detail}
+unique(comap_legend$legend)
+```
+- **Manager Detail** is a similar field, but has slightly greater specificity, such that different state and local entities are uniquely represented. 
+
+```{r manager-detail}
+# the number of unique values in Larimer County
+length(unique(comap_manager_detail$MANAGER_DETAIL))
+# the first 10 unique values
+unique(comap_manager_detail$MANAGER_DETAIL)[1:10]
+```
+
+The "Legend Detail" layer has a higher number of cross-boundary treatments than the "Manager Detail" layer across all buffer sizes. 
+
+There are arguments to be made for either layer. The practical impact of the decision is shown by the gap between the two lines in the above plot. Across all buffer sizes, the "Legend" layer identifies more cross-boundary treatments than the "Manager Detail" layer. This is a bit surprising, given that the "Manager Detail" layer is more specific. However, the Legend is the only one that distinguishes between "Private" and "Private Conservation" lands, which are all lumped under the category of "Private" in the "Manager Detail" layer. This can lead to a situation where a single treatment crosses a "Legend" boundary without crossing a "Manager Detail" boundary, resulting in a higher count of cross-boundary treatments in the "Legend" layer.
+
+For example:
+
+![Private/Private Conservation boundary](images/xb_by_legend_TRUE_private_privateConservation.png)
+
+In this case, the landowner may be identical across both CoMAP polygons, with a conservation easement on a fraction of the landowner's property. We don't know whether there truly is just one landowner or multiple, and we can't know without parcel data-which really gets messy. It's hard to say whether this is one landowner operating across an easement boundary or multiple landowners working in a "cross-boundary" manner.
+
+On the flip side, there are occasionally cases where the "Manager Detail" layer identifies a cross-boundary treatment that the "Legend" layer does not. This is because the "Manager Detail" layer is more specific, identifying different National Forests and different agencies within the local and state government. Here's an example of a "cross-boundary" treatment that crosses a boundary between two different National Forests, but does not cross a boundary between two different "Legend" categories:
+
+![Routt/Arapahoe NF boundary](images/xb_by_managerDetail.png)
+
+# Conclusion
+We think a buffer of -15 and the "Manager Detail" layers are the best options for identifying cross-boundary treatments. This approach balances the risk of Type 1 and Type 2 errors, while also providing a clear and consistent definition of what counts as "cross-boundary". It's also easy to argue that different National Forests or different parts of state or local agencies working together can still execute "cross-boundary" treatments, even if they are entirely within the same "Legend" category.
+
+# Next steps
+We have not yet addressed the issue of co-planned treatments that are split into multiple polygons. We're still working on that and will update here when we have something to share. 

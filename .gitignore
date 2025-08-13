@@ -53,3 +53,7 @@ raw/
 
 # html files
 *.html
+
+# images
+images/*
+*.png

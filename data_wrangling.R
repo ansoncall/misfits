@@ -11,12 +11,10 @@ library(spatialEco)
 treatments_raw <- st_read("raw/LarimerCoTreatments.gdb", fid_column_name = "OBJECTID")
 
 treatments_raw %<>% st_make_valid
-plot(treatments_raw)
-mapview(treatments_raw)
 # conservation areas
-comap_raw <- st_read("raw/COMaP_GDB/COMaP_v20240702.gdb")
-comap_legend <- st_read("raw/misfits.gdb", layer = "COMaP_Legend_Dissolve")
-comap_manager_detail <- st_read("raw/misfits.gdb", layer = "COMaP_Manager_Dissolve")
+comap_raw <- st_read("raw/misfits.gdb", layer = "COMaP_Raw")
+comap_legend <- st_read("raw/misfits.gdb", layer = "COMaP_LarimerCo_Legend")
+comap_manager_detail <- st_read("raw/misfits.gdb", layer = "COMaP_LarimerCo_Manager")
 
 # defining xb stuff ####
 # TODO move this to the defining_xb.Rmd file
@@ -54,7 +52,7 @@ count_xb <- function (treatments, comap_lines, buffer_distance) {
   return(n_xb)
 }
 
-buffer_distances <- seq(from = -100, 0, by = 2)
+buffer_distances <- seq(from = -100, 0, by = 10)
 
 xb_counts <- map_dbl(buffer_distances,
                       \(x) count_xb(treatments_raw, comap_legend_lines, x),
@@ -120,15 +118,55 @@ comap_raw %>%
   ) %>%
   arrange(desc(unique_legend))
 
+
+
+
 # TODO resolve why I'm not seeing more PRIVATE land parcels on this map. This
 # result is not trustworthy until we figure this out!
 comap_private <- comap_raw %>%
   filter(MANAGER_DETAIL == "Private")
-
+plot(comap_raw)
+mapview(comap_raw)
 mapview(comap_legend_lines, col.regions = "blue") +
   mapview(comap_manager_lines, col.regions = "green") +
   mapview(treatments_comap_polys, col.regions = "red") +
-  mapview(comap_private, col.regions = "hotpink")
+  mapview(comap_private, col.regions = "purple")
+
+
+xb_tab <- function (treatments, comap_lines, buffer_distance) {
+  # step 1. buffer treatments by buffer_distance
+  treatments_buffered <- st_buffer(treatments_raw, dist = buffer_distance)
+  # step 2. identify which buffered treatments intersect comap boundaries
+  treatments_comap <- st_intersection(treatments_buffered,
+                                      comap_lines)
+  # step 3. identify which polygons in the original treatments intersected comap
+  # boundaries
+  treatments_comap_polys <- treatments_buffered %>%
+    filter(OBJECTID %in% treatments_comap$OBJECTID)
+  # step 4. return polys
+  return(treatments_comap_polys)
+}
+
+legend_buffer_out <- xb_tab(treatments_raw, comap_legend_lines, -15)
+nrow(legend_buffer_out)
+
+manager_buffer_out <- xb_tab(treatments_raw, comap_manager_lines, -15)
+nrow(manager_buffer_out)
+
+diff <- legend_buffer_out %>%
+  filter(!OBJECTID %in% manager_buffer_out$OBJECTID)
+
+diff2 <- manager_buffer_out %>%
+  filter(!OBJECTID %in% legend_buffer_out$OBJECTID)
+diff2
+
+
+
+nrow(legend_buffer_out) - nrow(manager_buffer_out)
+
+mapview(diff) + mapview(diff2, col.regions = "purple") +
+  mapview(comap_legend_lines, col.regions = "blue") +
+  mapview(comap_manager_lines, col.regions = "green")
 
 # one trt, two polys ####
 # TODO:
