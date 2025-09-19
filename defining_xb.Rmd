@@ -1,12 +1,42 @@
 ---
 title: "What counts as cross-boundary?" 
-author: "Anson Call" 
+author: "Anson Call and Karissa Courtney" 
 date: "`r Sys.Date()`" 
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
 ---
+
+<script src="hideOutput.js"></script>
+```{css, echo=FALSE}
+/* styling for show/hide buttons on code and code output */
+
+.showopt {
+  background-color: #004c93;
+  color: #FFFFFF;
+  width: 100px;
+  height: 20px;
+  text-align: center;
+  vertical-align: middle !important;
+  float: right;
+  font-family: sans-serif;
+  border-radius: 8px;
+}
+
+.showopt:hover {
+  background-color: #dfe4f2;
+  color: #004c93;
+}
+
+pre.plot {
+  background-color: white !important;
+}
+```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(out.extra = 'class="plot"')
 # load packages ####
 library(tidyverse)
 library(mapview)
@@ -17,16 +47,18 @@ library(spatialEco)
 
 # Intro
 
-In this document, we explore how to define "cross-boundary" treatments. Two main issues arise: buffer size and the choice of CoMAP layer. What follows is a step-by-step walk through of these issues, using data from Larimer County, Colorado as an example. The comple R code is shown for those interested, but you can skip the code and still follow along with the discussion.
+In this document, we explore how to define "cross-boundary" treatments. Three main topics are covered: buffer sizes, multi-polygon cross-boundary treatments, and the choice of CoMAP layer. What follows is a step-by-step walk through of the issues relating to these topics, using data from Larimer County, Colorado as an example. 
 
-## Load the raw data 
+## Data
 
 The data we will use includes:
-  - Conservation status from COMaP
-    - "Manager Detail" - attribute that contains specific information on the managing entity (e.g. "Routt NF", "Boulder City Parks")
-    - "Legend" - attribute that contains general information on the conservation status (e.g. "National Forest", "State Park", "Private")
-  - Treatments from Colorado Forest Tracker
 
+- Conservation status from COMaP
+  - "Manager Detail" - attribute that contains specific information on the managing entity (e.g. "Routt NF", "Boulder City Parks")
+  - "Legend" - attribute that contains general information on the conservation status (e.g. "National Forest", "State Park", "Private")
+- Fuel treatments from Colorado Forest Tracker
+  
+<div class="fold s o">
 ```{r load-data, warning=FALSE, message=FALSE}
 # load data ####
 # fuel treatments
@@ -36,22 +68,15 @@ treatments_raw %<>% st_make_valid
 comap_legend <- st_read("raw/misfits.gdb", layer = "COMaP_LarimerCo_Legend")
 comap_manager_detail <- st_read("raw/misfits.gdb", layer = "COMaP_LarimerCo_Manager")
 ```
+</div>
 
 # Buffer size 
 
-Because the CoMAP and treatment boundaries are not exact,
-treatments can appear to be "cross-boundary" simply because of geolocation
-error. This happens when a treatment mistakenly "spills over" a CoMAP boundary,
-intersecting with multiple CoMAP types. For example:
+Because the CoMAP and treatment boundaries are not exact, treatments can appear to be "cross-boundary" simply because of geolocation error. This happens when a treatment mistakenly "spills over" a CoMAP boundary, intersecting with multiple CoMAP types. For example:
 
 ![](images/xb_by_legend_FALSE_geo_error.png)
 
-To avoid this, we need to define a "negative buffer" that moves the boundaries
-of treatments inward by a set amout. The more negative the buffer, the less risk
-of Type  1 or false-positive cross-boundary treatments. The less negative the
-buffer, the more risk of Type 2 or false-negative cross-boundary treatments.
-We tested out different buffer sizes across the two possible CoMAP layers,
-"Legend Detail" and "Manager Detail".
+To avoid this, we need to define a "negative buffer" that moves the boundaries of treatments inward by a set amout. The more negative the buffer, the less risk of Type  1 or false-positive cross-boundary treatments. The less negative the buffer, the more risk of Type 2 or false-negative cross-boundary treatments. We tested out different buffer sizes across the two possible CoMAP layers, "Legend Detail" and "Manager Detail".
 
 ```{r buffer-size}
 # function to count cross-boundary treatments across different buffer sizes
@@ -76,9 +101,7 @@ legend_manager_comp <- tibble(buffer_distance = seq(from = -100,
                                                     by = 2))
 ```
 
-For this to work, we need to see if a (buffered) treatment intersects the
-*boundary* of a CoMAP layer. So, we need to create polyline versions of the
-CoMAP layers.
+For this to work, we need to see if a (buffered) treatment intersects the *boundary* of a CoMAP layer. So, we need to create polyline versions of the CoMAP layers.
 
 ```{r make-line-layers}
 # convert comap to lines
@@ -90,8 +113,7 @@ comap_manager_lines <- st_cast(comap_manager_detail, "MULTIPOLYGON") %>%
   st_cast("MULTILINESTRING")
 ```
 
-Now, we can apply the function across both CoMAP layers and the different buffer
-sizes.
+Now, we can apply the function across both CoMAP layers and the different buffer sizes.
 
 ```{r apply-buffer-size, warning=FALSE}
 legend_manager_comp$xb_count_legend <- map_dbl(
@@ -105,7 +127,7 @@ legend_manager_comp$xb_count_manager <- map_dbl(
 head(legend_manager_comp)
 ```
 
-Finally, we can plot the result:
+Finally, we can plot the result. The x axis shows a range of buffer sizes; the y axis shows the number of treatment polygons that still cross a CoMAP boundary after applying the buffer.
 
 ```{r plot-buffer-size}
 # plot the results
@@ -125,12 +147,91 @@ ggplot(legend_manager_comp, aes(x = buffer_distance)) +
   theme(legend.position = "bottom")
 ```
 
+The plot shows a clear inflection point at a buffer size of about -15 meters. This is consistent with the idea that spatial inaccuracies of +/-15m are relatively widespread. 
+
+## Summary
+
+- Treatment polygons that only overlap a CoMAP boundary by 15m or less can't reliably by considered "cross-boundary". 
+  - While some of these treatments may have involved cross-boundary coordination and planning, the majority of them are likely not co-planned with boundary overlaps simply due to spatial inaccuracy. 
+- Only treatments with polygons that overlap a boundary by 15m or more should be counted as "cross-boundary".
+
+# Multi-polygon treatments
+
+Even when a treatment is truly cross-boundary in nature, it is reasonable to expect that it may be recorded with two (or more) separate polygons that are divided by the jurisdictional boundary. Identifying these instances of "multi-polygon" cross-boundary treatments requires some extra work. 
+
+For example, look at the pink and blue polygons in the map below. Neither polygon overlaps a CoMAP boundary (shown in red), but these two polygons clearly make up a single cross-boundary treatment:
+
+![](images/xb_treatments_sheepCreek2.png)
+
+To identify these treatment pairs or groups, we've adopted the following approach:
+
+  1. Assign each treatment to a "home" CoMAP polygon. This is necessary in order to identify possible matching polygons in a cross-boundary area (i.e. in a CoMAP polygon *other than* the home polygon.
+  2. **For each polygon:**
+  Of all other polygons that are *not* in the "home" region, identify the *k-* nearest neighbors **in time and space.** 
+    a. We expect that the cross-boundary polygon groups we are looking for will have been completed around the same time--perhaps within one or two years of each other.     
+    b. We expect that cross-boundary polygon groups will be spatially adjacent or nearly adjacent.
+  3. Define a sensible time and distance threshold. If polygon pairs are similar enough in completion date and near enough in space, we will assume they are co-planned and count them as cross-boundary. 
+  4. Use the name attribute to check for similarities between treatment names. If the polygons are similarly named, this adds to our confidence that they are indeed co-planned and cross-boundary. However, there are valid reasons that cross-boundary polygons could be named differently, and we don't suggest excluding polygon pairs from the cross-boundary category on the basis of dissimilar name attributes alone. 
+    
+To identify sensible time and space thresholds, we can search through all possible polygon pairs and examine a histogram of the distances between each polygon and their closest potential matches. The computational burden scales exponentially with *k*, placing a practical limit on the number of polygon pairs we can effectively search. 
+
+The plot below shows a search across three degrees of time separation: same completion year, +/- 1 completion year, and +/- 2 completion years. In this histogram, treatments are binned by *distance to their kth-nearest cross-boundary neighbor,* with neighbors 1, 2, and 3 shown in different colors. 
+
+```{multipoly-xb}
+rm(list = ls())
+
+source("xb_trts.R")
+multi_poly_xb_all_dists
+```
+
+Now, the same plot, but zeroing in on the >2500 m distance range:
+
+```{multipoly-xb2}
+multi_poly_xb_close
+```
+
+The takeaway here is that you can see a spike in the lowest (closest) bin: a lot of treatments have "neighbors" in a different CoMAP region that are both spatially and temporally near. We don't know for sure whether these treatments are co-planned, but their spatial and temporal proximity suggests that they might be. 
+
+We suggest that any treatment with a neighbor <20 meters away in space (and in a separate CoMAP region) and +/- 2 years away in completion date should be counted as cross-boundary. 
+
+## Project names
+
+In addition to spatial and temporal proximity, we wish to compare the project names of neighboring treatments to see if they are similar. Similar names would confirm our suspicion that these treatments are indeed co-planned. We can compare the similarity of project name attributes using the [Levenshtein distance](https://en.wikipedia.org/wiki/Levenshtein_distance). 
+
+First, we can check the similarity of project names between neighboring treatments, and compare this to the similarity of names across the dataset a whole. The idea is that *project name similarity* and *temporal+spatial proximity* should both be indicators of cross-boundary planning. If so, project name similarity should generally be highest among the treatment pairs that we've already identified as potentially cross-boundary by their temporal+spatial proximity. 
+
+To do this, we'll calculate the Levenshtein distance between all possible neighboring pairs, and calculate the same metric for random treatment pairs. We'd expect a higher density of low Levenshtein distances (e.g. more name similarity) in the neighboring pairs group, and a lower density of low Levenshtein distances (e.g. less name similarity) in the random treatment pairs. The result looks like this:
+
+```{multipoly-xb2}
+lev_density
+```
+
+This **does not** match our expectation. Low Levenshtein distances are not especially common in the neighbor pairs. Additionally, there is a large spike in density right around a distance of ~38. This reflects a large number of very similar distances, and this is in fact explained by the high frequency of missing data in a subset of the treatment records. 
+
+In fact, even when the project names of neighboring paired/grouped treatments *do* match (18/163 treatments), it's often because the project name is "None". 
+
+```{multipoly-xb3}
+low_lev_names
+```
+
+As it turns out, in a large number of the potential multi-polygon cross-boundary treatment pairs, one member of the pair is a record from the Colorado State Forest Service. The ```PROJECT NAME``` attribute is often N/A or "None" for these records. It makes sense that the CSFS would be involved in lots of cross-boundary work, and it is also plausible that this agency just doesn't use the ```PROJECT NAME``` attribute in their system. 
+
+In the end, using the ```PROJECT NAME``` is a good idea, but the data is not complete enough to implement this idea. 
+
+## Summary
+
+- Treatments should be counted as "cross-boundary" when they have one or more neighboring treatments that are in a different CoMAP region, <20m spatially distant, and <2 years temporally distant. 
+- The Project Name attribute fields are not complete enough to be useful. 
+
 # Discussion 
 
 ## Buffer Size
 In the above plot, you can see that the number of treatments identified as "cross-boundary" is highly dependent on the buffer size. More negative buffers result in fewer cross-boundary treatments, while less negative buffers result in more cross-boundary treatments. The dashed red line at -15 meters marks the inflection point where type 1 and type 2 errors appear to be roughly in balance. This is our recommended buffer size. 
 
-## CoMAP Layer
+## Multi-polygon treatments
+Lorem ipsum. TODO
+
+## CoMAP layer
 CoMAP is by far the best source of information on conservation areas in Colorado, and is definitely the best source for identifying "cross-boundary" treatments. There are many attributes that can be used to group the polygons of this layer; the two most sensible options and the two we focused on here are "Legend" and "Manager Detail".
 
 - **Legend** is an attribute that was created for the sole purpose of mapmaking, but it happens to reflect our notion of what should count as "cross-boundary" relatively well. 
