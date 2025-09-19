@@ -268,7 +268,4 @@ st_write(obj = out,
          layer = "treatments_xb",
          append = FALSE)
 
-st_write(obj = out,
-         dsn = "treatments_xb.shp",
-         append = FALSE,
-         fid_column_name = "OBJECTID")
+write_csv(out %>% st_drop_geometry, "treatments_xb.csv")
