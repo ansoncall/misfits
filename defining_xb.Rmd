@@ -177,17 +177,21 @@ To identify sensible time and space thresholds, we can search through all possib
 
 The plot below shows a search across three degrees of time separation: same completion year, +/- 1 completion year, and +/- 2 completion years. In this histogram, treatments are binned by *distance to their kth-nearest cross-boundary neighbor,* with neighbors 1, 2, and 3 shown in different colors. 
 
-```{multipoly-xb}
+```{r multipoly-xb}
+
 rm(list = ls())
 
 source("xb_trts.R")
 multi_poly_xb_all_dists
+
 ```
 
 Now, the same plot, but zeroing in on the >2500 m distance range:
 
-```{multipoly-xb2}
+```{r multipoly-xb2}
+
 multi_poly_xb_close
+
 ```
 
 The takeaway here is that you can see a spike in the lowest (closest) bin: a lot of treatments have "neighbors" in a different CoMAP region that are both spatially and temporally near. We don't know for sure whether these treatments are co-planned, but their spatial and temporal proximity suggests that they might be. 
@@ -202,16 +206,20 @@ First, we can check the similarity of project names between neighboring treatmen
 
 To do this, we'll calculate the Levenshtein distance between all possible neighboring pairs, and calculate the same metric for random treatment pairs. We'd expect a higher density of low Levenshtein distances (e.g. more name similarity) in the neighboring pairs group, and a lower density of low Levenshtein distances (e.g. less name similarity) in the random treatment pairs. The result looks like this:
 
-```{multipoly-xb2}
+```{r multipoly-xb3}
+
 lev_density
+
 ```
 
 This **does not** match our expectation. Low Levenshtein distances are not especially common in the neighbor pairs. Additionally, there is a large spike in density right around a distance of ~38. This reflects a large number of very similar distances, and this is in fact explained by the high frequency of missing data in a subset of the treatment records. 
 
 In fact, even when the project names of neighboring paired/grouped treatments *do* match (18/163 treatments), it's often because the project name is "None". 
 
-```{multipoly-xb3}
+```{multipoly-xb4}
+
 low_lev_names
+
 ```
 
 As it turns out, in a large number of the potential multi-polygon cross-boundary treatment pairs, one member of the pair is a record from the Colorado State Forest Service. The ```PROJECT NAME``` attribute is often N/A or "None" for these records. It makes sense that the CSFS would be involved in lots of cross-boundary work, and it is also plausible that this agency just doesn't use the ```PROJECT NAME``` attribute in their system. 
@@ -229,7 +237,7 @@ In the end, using the ```PROJECT NAME``` is a good idea, but the data is not com
 In the above plot, you can see that the number of treatments identified as "cross-boundary" is highly dependent on the buffer size. More negative buffers result in fewer cross-boundary treatments, while less negative buffers result in more cross-boundary treatments. The dashed red line at -15 meters marks the inflection point where type 1 and type 2 errors appear to be roughly in balance. This is our recommended buffer size. 
 
 ## Multi-polygon treatments
-Lorem ipsum. TODO
+Lorem ipsum TODO
 
 ## CoMAP layer
 CoMAP is by far the best source of information on conservation areas in Colorado, and is definitely the best source for identifying "cross-boundary" treatments. There are many attributes that can be used to group the polygons of this layer; the two most sensible options and the two we focused on here are "Legend" and "Manager Detail".
@@ -237,7 +245,9 @@ CoMAP is by far the best source of information on conservation areas in Colorado
 - **Legend** is an attribute that was created for the sole purpose of mapmaking, but it happens to reflect our notion of what should count as "cross-boundary" relatively well. 
 
 ```{r legend-detail}
-unique(comap_legend$legend)
+# TODO refactor this
+# unique(comap_legend$legend)
+
 ```
 - **Manager Detail** is a similar field, but has slightly greater specificity, such that different state and local entities are uniquely represented. 
 
@@ -261,9 +271,3 @@ In this case, the landowner may be identical across both CoMAP polygons, with a 
 On the flip side, there are occasionally cases where the "Manager Detail" layer identifies a cross-boundary treatment that the "Legend" layer does not. This is because the "Manager Detail" layer is more specific, identifying different National Forests and different agencies within the local and state government. Here's an example of a "cross-boundary" treatment that crosses a boundary between two different National Forests, but does not cross a boundary between two different "Legend" categories:
 
 ![Routt/Arapahoe NF boundary](images/xb_by_managerDetail.png)
-
-# Conclusion
-We think a buffer of -15 and the "Manager Detail" layers are the best options for identifying cross-boundary treatments. This approach balances the risk of Type 1 and Type 2 errors, while also providing a clear and consistent definition of what counts as "cross-boundary". It's also easy to argue that different National Forests or different parts of state or local agencies working together can still execute "cross-boundary" treatments, even if they are entirely within the same "Legend" category.
-
-# Next steps
-We have not yet addressed the issue of co-planned treatments that are split into multiple polygons. We're still working on that and will update here when we have something to share. 

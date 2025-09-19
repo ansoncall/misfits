@@ -369,338 +369,335 @@ low_lev_names <-  treatments_xb %>%
 # data just isn't there.
 
 
-# private/private conservation ####
-# conservation areas
-comap_legend_detail <- st_read("raw/misfits.gdb",
-                               layer = "COMaP_LarimerCo_Legend")
-
-# make lines for COMaP "Legend Detail" attribute
-comap_legend_lines <- st_cast(comap_legend_detail, "MULTIPOLYGON") %>%
-  st_cast("MULTILINESTRING")
-
-# assign id col to comap polys
-comap_l <- comap_legend_detail %>%
-  mutate(id =  row_number()) %>%
-  st_cast("MULTIPOLYGON")
-
-comap_p_pc <- rbind(pc_lands,  p_lands %>% select(legend:id))
-
-# starting over with treatments, id single-poly private-private conservation
-# xb treatments
-treatments <- treatments
-
-# id centroids
-trts_centroids <- map(seq_len(nrow(treatments)), \(x) {
-  y <- treatments[x, ]
-  st_centroid_within_poly(y)
-}) %>%
-  do.call(rbind, .)
-
-trts_centroids_join <- st_join(trts_centroids, comap_p_pc, st_intersects)
-
-# build private set
-treatments_join_private <- left_join(treatments,
-                                     trts_centroids_join %>% select(OBJECTID, id) %>% st_drop_geometry,
-                                     by = "OBJECTID") %>%
-  filter(id == 5)
-
-treatments_join_private_b <- st_buffer(treatments_join_private, -15)
-
-# build private conservation set
-treatments_join_private_cons <- left_join(treatments,
-                                     trts_centroids_join %>% select(OBJECTID, id) %>% st_drop_geometry,
-                                     by = "OBJECTID") %>%
-  filter(id == 6)
-
-
-treatments_join_private_cons_b <- st_buffer(treatments_join_private_cons, -15)
-
-mapview(treatments_join_private, col.regions = "blue") +
-mapview(treatments_join_private_b, col.regions = "red")
-
-# id private lands treatments that overlap private conservation
-pc_lands <- comap_l %>% filter(id == 6)
-pc_landlines <- pc_lands %>% st_cast("MULTILINESTRING")
-private_to_private_cons <- st_intersection(treatments_join_private_b, pc_lands)
-
-# and vice versa
-p_lands <- comap_l %>% filter(id == 5) %>% st_make_valid %>% st_difference(pc_lands)
-p_landlines <- p_lands %>% st_cast("MULTILINESTRING")
-private_cons_to_private <- st_intersection(treatments_join_private_cons_b, p_lands)
-
-
-output <- treatments %>% filter(OBJECTID %in% c(private_cons_to_private$OBJECTID, private_to_private_cons$OBJECTID))
-
-test <- private_cons_to_private %>% filter(OBJECTID == 629) %>% st_buffer(-15)
-
-mapview(p_lands, col.regions = "yellow") +
-  mapview(pc_lands, col.regions = "blue") +
-  mapview(output, col.regions = "red") +
-  mapview(test, col.regions = "hotpink")
-
-
-
-
-
-buffer_distance <- -15
-# step 1. buffer treatments by a negative buffer_distance
-treatments_buffered <- st_buffer(treatments, dist = buffer_distance)
-# step 2. identify which *buffered* treatments intersect comap boundaries
-treatments_comap <- st_join(treatments_buffered, comap_lines, st_intersection)
-# id single poly xb treatments
-treatments_comap_polys <- treatments_buffered %>%
-  filter(OBJECTID %in% treatments_comap$OBJECTID)
-
-mapview(treatments_comap_polys) + mapview(comap_legend_lines)
-
-treatments <- treatments %>%
-  mutate(single_poly_xb = case_when(
-    OBJECTID %in% treatments_comap$OBJECTID ~ 1,
-    .default = 0
-  ))
-
-
-trts_centroids_legend_join <- st_join(trts_centroids, comap_l, st_intersects)
-
-treatments_legend_join <- left_join(treatments,
-                             trts_centroids_legend_join %>% select(OBJECTID, id) %>% st_drop_geometry,
-                             by = "OBJECTID")
-
-# filter to private/private conservation only
-treatments_private <- treatments_legend_join %>%
-  filter(id %in% c(5, 6))
-
-# TODO fix edge case: one multipart polygon not assigned to comap region because
-# part of it falls outside the county
-mapview(comap_l, col.regions = "red") +
-  mapview(treatments_legend_join[1607, ]) +
-  mapview(trts_centroids_legend_join[1607, ])
-treatments_legend_join$id[1607] <- 8
-
-
-# id nearest neighbors
-
-treatments_private$closest_same_yr_OBJECTID_1 <- NULL
-treatments_private$closest_same_yr_dist_1 <- NULL
-treatments_private$closest_same_yr_OBJECTID_2 <- NULL
-treatments_private$closest_same_yr_dist_2 <- NULL
-treatments_private$closest_same_yr_OBJECTID_3 <- NULL
-treatments_private$closest_same_yr_dist_3 <- NULL
-treatments_private$closest_plus1_OBJECTID_1 <- NULL
-treatments_private$closest_plus1_dist_1 <- NULL
-treatments_private$closest_plus1_OBJECTID_2 <- NULL
-treatments_private$closest_plus1_dist_2 <- NULL
-treatments_private$closest_plus1_OBJECTID_3 <- NULL
-treatments_private$closest_plus1_dist_3 <- NULL
-treatments_private$closest_plus2_OBJECTID_1 <- NULL
-treatments_private$closest_plus2_dist_1 <- NULL
-treatments_private$closest_plus2_OBJECTID_2 <- NULL
-treatments_private$closest_plus2_dist_2 <- NULL
-treatments_private$closest_plus2_OBJECTID_3 <- NULL
-treatments_private$closest_plus2_dist_3 <- NULL
-
-
-tic()
-for (i in 1:nrow(treatments_private)) {
-  # i <- 1
-  home_comap_poly <- treatments_private$id[i]
-  target_trt <- treatments_private[i, ]
-  target_yr <- target_trt$YEAR_COMP
-
-  filtered_same_yr <- treatments_private %>% filter(id != home_comap_poly,
-                                                 YEAR_COMP == target_yr)
-  filtered_plus1_yr <- treatments_private %>% filter(id != home_comap_poly,
-                                                  YEAR_COMP == target_yr + 1 |
-                                                    YEAR_COMP == target_yr - 1)
-  filtered_plus2_yr <- treatments_private %>% filter(id != home_comap_poly,
-                                                  YEAR_COMP == target_yr + 2 |
-                                                    YEAR_COMP == target_yr - 2)
-
-  matches_yr <- nrow(filtered_same_yr)
-  matches_plus1 <- nrow(filtered_plus1_yr)
-  matches_plus2 <- nrow(filtered_plus2_yr)
-
-  if (matches_yr == 0) {
-    treatments_private$closest_same_yr_OBJECTID_1[i] <- NA
-    treatments_private$closest_same_yr_dist_1[i] <- NA
-    treatments_private$closest_same_yr_OBJECTID_2[i] <- NA
-    treatments_private$closest_same_yr_dist_2[i] <- NA
-    treatments_private$closest_same_yr_OBJECTID_3[i] <- NA
-    treatments_private$closest_same_yr_dist_3[i] <- NA
-
-  } else if (matches_yr > 0 && matches_yr < 3) {
-    closest_n_same_yr <- st_nn(target_trt,
-                               filtered_same_yr,
-                               k = matches_yr,
-                               returnDist = TRUE)
-    # hacky way to return OIDs instead of row idx
-    # TODO clean up
-    closest_n_same_yr$nn[[1]] <- st_drop_geometry(filtered_same_yr[closest_n_same_yr$nn[[1]], "OBJECTID"])[[1]]
-  } else {
-    closest_n_same_yr <- st_nn(target_trt,
-                               filtered_same_yr,
-                               k = 3,
-                               returnDist = TRUE)
-    closest_n_same_yr$nn[[1]] <- st_drop_geometry(filtered_same_yr[closest_n_same_yr$nn[[1]], "OBJECTID"])[[1]]
-  }
-
-  if (matches_plus1 == 0) {
-    treatments_private$closest_plus1_OBJECTID_1[i] <- NA
-    treatments_private$closest_plus1_dist_1[i] <- NA
-    treatments_private$closest_plus1_OBJECTID_2[i] <- NA
-    treatments_private$closest_plus1_dist_2[i] <- NA
-    treatments_private$closest_plus1_OBJECTID_3[i] <- NA
-    treatments_private$closest_plus1_dist_3[i] <- NA
-  } else if (matches_plus1 > 0 && matches_plus1 < 3) {
-    closest_n_plus1 <- st_nn(target_trt,
-                             filtered_plus1_yr,
-                             k = matches_plus1,
-                             returnDist = TRUE)
-    closest_n_plus1$nn[[1]] <- st_drop_geometry(filtered_plus1_yr[closest_n_plus1$nn[[1]], "OBJECTID"])[[1]]
-  } else {
-    closest_n_plus1 <- st_nn(target_trt,
-                             filtered_plus1_yr,
-                             k = 3,
-                             returnDist = TRUE)
-    closest_n_plus1$nn[[1]] <- st_drop_geometry(filtered_plus1_yr[closest_n_plus1$nn[[1]], "OBJECTID"])[[1]]
-  }
-
-  if (matches_plus2 == 0) {
-    treatments_private$closest_plus2_OBJECTID_1[i] <- NA
-    treatments_private$closest_plus2_dist_1[i] <- NA
-    treatments_private$closest_plus2_OBJECTID_2[i] <- NA
-    treatments_private$closest_plus2_dist_2[i] <- NA
-    treatments_private$closest_plus2_OBJECTID_3[i] <- NA
-    treatments_private$closest_plus2_dist_3[i] <- NA
-
-  } else if (matches_plus2 > 0 && matches_plus2 < 3){
-    closest_n_plus2 <- st_nn(target_trt,
-                             filtered_plus2_yr,
-                             k = matches_plus2,
-                             returnDist = TRUE)
-    closest_n_plus2$nn[[1]] <- st_drop_geometry(filtered_plus2_yr[closest_n_plus2$nn[[1]], "OBJECTID"])[[1]]
-  } else {
-    closest_n_plus2 <- st_nn(target_trt,
-                             filtered_plus2_yr,
-                             k = 3,
-                             returnDist = TRUE)
-    closest_n_plus2$nn[[1]] <- st_drop_geometry(filtered_plus2_yr[closest_n_plus2$nn[[1]], "OBJECTID"])[[1]]
-  }
-
-  treatments_private$closest_same_yr_OBJECTID_1[i] <- NA
-  try(treatments_private$closest_same_yr_OBJECTID_1[i] <- closest_n_same_yr$nn[[1]][[1]])
-  treatments_private$closest_same_yr_dist_1[i] <- NA
-  try(treatments_private$closest_same_yr_dist_1[i] <- closest_n_same_yr$dist[[1]][[1]])
-  treatments_private$closest_same_yr_OBJECTID_2[i] <- NA
-  try(treatments_private$closest_same_yr_OBJECTID_2[i] <- closest_n_same_yr$nn[[1]][[2]])
-  treatments_private$closest_same_yr_dist_2[i] <- NA
-  try(treatments_private$closest_same_yr_dist_2[i] <- closest_n_same_yr$dist[[1]][[2]])
-  treatments_private$closest_same_yr_OBJECTID_3[i] <- NA
-  try(treatments_private$closest_same_yr_OBJECTID_3[i] <- closest_n_same_yr$nn[[1]][[3]])
-  treatments_private$closest_same_yr_dist_3[i] <- NA
-  try(treatments_private$closest_same_yr_dist_3[i] <- closest_n_same_yr$dist[[1]][[3]])
-
-  treatments_private$closest_plus1_OBJECTID_1[i] <- NA
-  try(treatments_private$closest_plus1_OBJECTID_1[i] <- closest_n_plus1$nn[[1]][[1]])
-  treatments_private$closest_plus1_dist_1[i] <- NA
-  try(treatments_private$closest_plus1_dist_1[i] <- closest_n_plus1$dist[[1]][[1]])
-  treatments_private$closest_plus1_OBJECTID_2[i] <- NA
-  try(treatments_private$closest_plus1_OBJECTID_2[i] <- closest_n_plus1$nn[[1]][[2]])
-  treatments_private$closest_plus1_dist_2[i] <- NA
-  try(treatments_private$closest_plus1_dist_2[i] <- closest_n_plus1$dist[[1]][[2]])
-  treatments_private$closest_plus1_OBJECTID_3[i] <- NA
-  try(treatments_private$closest_plus1_OBJECTID_3[i] <- closest_n_plus1$nn[[1]][[3]])
-  treatments_private$closest_plus1_dist_3[i] <- NA
-  try(treatments_private$closest_plus1_dist_3[i] <- closest_n_plus1$dist[[1]][[3]])
-
-  # TODO fix subscript out of bounds when matches > 0 && matches < 3
-  treatments_private$closest_plus2_OBJECTID_1[i] <- closest_n_plus2$nn[[1]][[1]]
-  treatments_private$closest_plus2_dist_1[i] <- closest_n_plus2$dist[[1]][[1]]
-
-  treatments_private$closest_plus2_OBJECTID_2[i] <- NA
-  try(treatments_private$closest_plus2_OBJECTID_2[i] <- closest_n_plus2$nn[[1]][[2]])
-  treatments_private$closest_plus2_OBJECTID_2[i] <- NA
-  try(treatments_private$closest_plus2_OBJECTID_2[i] <- closest_n_plus2$nn[[1]][[2]])
-  treatments_private$closest_plus2_dist_2[i] <- NA
-  try(treatments_private$closest_plus2_dist_2[i] <- closest_n_plus2$dist[[1]][[2]])
-  treatments_private$closest_plus2_OBJECTID_3[i] <- NA
-  try(treatments_private$closest_plus2_OBJECTID_3[i] <- closest_n_plus2$nn[[1]][[3]])
-  treatments_private$closest_plus2_dist_3[i] <- NA
-  try(treatments_private$closest_plus2_dist_3[i] <- closest_n_plus2$dist[[1]][[3]])
-
-  print(i)
-}
-toc()
-
-# plots
-
-# graph: all data
-treatments_private %>%
-  pivot_longer(contains("_dist_"), names_to = "type", values_to = "distance") %>%
-  mutate(
-    year_slice = case_when(
-      str_detect(type, "_same_yr_") ~ "same",
-      str_detect(type, "_plus1_") ~ "plus1",
-      str_detect(type, "_plus2_") ~ "plus2",
-      .default = "ERROR"
-    ),
-    neighbor = case_when(
-      str_detect(type, "_dist_1") ~ "first",
-      str_detect(type, "_dist_2") ~ "second",
-      str_detect(type, "_dist_3") ~ "third",
-      .default = "ERROR_neighbor"
-    )
-  ) %>%
-  ggplot(aes(x = distance, fill = neighbor)) +
-  geom_histogram(alpha = 0.6, position = "dodge") +
-  facet_wrap(~year_slice, nrow = 3) +
-  scale_fill_manual(values = c("#162521", "#4F7CAC", "#C0E0DE")) +
-  theme_minimal() +
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 14))
-
-# graph: less than 2.5 kms
-treatments_private %>%
-  pivot_longer(contains("_dist_"), names_to = "type", values_to = "distance") %>%
-  mutate(
-    year_slice = case_when(
-      str_detect(type, "_same_yr_") ~ "same",
-      str_detect(type, "_plus1_") ~ "plus1",
-      str_detect(type, "_plus2_") ~ "plus2",
-      .default = "ERROR"
-    ),
-    neighbor = case_when(
-      str_detect(type, "_dist_1") ~ "first",
-      str_detect(type, "_dist_2") ~ "second",
-      str_detect(type, "_dist_3") ~ "third",
-      .default = "ERROR_neighbor"
-    )
-  ) %>%
-  filter(distance < 1200) %>%
-  ggplot(aes(x = distance, fill = neighbor)) +
-  geom_histogram(alpha = 0.6, position = "dodge") +
-  facet_wrap(~year_slice, nrow = 3) +
-  scale_fill_manual(values = c("#162521", "#4F7CAC", "#C0E0DE")) +
-  theme_minimal() +
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 14))
-
-# map out some treatments where the neighbor is really close
-potential_private_xb <- treatments_private %>%
-  filter(closest_same_yr_dist_1 < 20 |
-           closest_plus1_dist_1 < 20 |
-           closest_plus2_dist_1 < 20)
-
-mapview(comap_legend_lines, color = "red") +
-  mapview(potential_private_xb,
-          zcol = "OBJECTID",
-          col.regions =
-            c(
-              rep(hcl.colors(palette = "Dynamic", n = 5), 32),
-              hcl.colors(palette = "Dynamic", n = 3)
-            )
-  )
-
-
-# TODO see how we can leverage the NAME attribute to further confirm xb nature
-# of treatment pairs
-
-# TODO refactor/tidy put into rmd
+# TODO refactor below
+# # private/private conservation ####
+# # conservation areas
+# comap_legend_detail <- st_read("raw/misfits.gdb",
+#                                layer = "COMaP_LarimerCo_Legend")
+#
+# # make lines for COMaP "Legend Detail" attribute
+# comap_legend_lines <- st_cast(comap_legend_detail, "MULTIPOLYGON") %>%
+#   st_cast("MULTILINESTRING")
+#
+# # assign id col to comap polys
+# comap_l <- comap_legend_detail %>%
+#   mutate(id =  row_number()) %>%
+#   st_cast("MULTIPOLYGON")
+#
+# comap_p_pc <- rbind(pc_lands,  p_lands %>% select(legend:id))
+#
+# # starting over with treatments, id single-poly private-private conservation
+# # xb treatments
+# treatments <- treatments
+#
+# # id centroids
+# trts_centroids <- map(seq_len(nrow(treatments)), \(x) {
+#   y <- treatments[x, ]
+#   st_centroid_within_poly(y)
+# }) %>%
+#   do.call(rbind, .)
+#
+# trts_centroids_join <- st_join(trts_centroids, comap_p_pc, st_intersects)
+#
+# # build private set
+# treatments_join_private <- left_join(treatments,
+#                                      trts_centroids_join %>% select(OBJECTID, id) %>% st_drop_geometry,
+#                                      by = "OBJECTID") %>%
+#   filter(id == 5)
+#
+# treatments_join_private_b <- st_buffer(treatments_join_private, -15)
+#
+# # build private conservation set
+# treatments_join_private_cons <- left_join(treatments,
+#                                      trts_centroids_join %>% select(OBJECTID, id) %>% st_drop_geometry,
+#                                      by = "OBJECTID") %>%
+#   filter(id == 6)
+#
+#
+# treatments_join_private_cons_b <- st_buffer(treatments_join_private_cons, -15)
+#
+# mapview(treatments_join_private, col.regions = "blue") +
+# mapview(treatments_join_private_b, col.regions = "red")
+#
+# # id private lands treatments that overlap private conservation
+# pc_lands <- comap_l %>% filter(id == 6)
+# pc_landlines <- pc_lands %>% st_cast("MULTILINESTRING")
+# private_to_private_cons <- st_intersection(treatments_join_private_b, pc_lands)
+#
+# # and vice versa
+# p_lands <- comap_l %>% filter(id == 5) %>% st_make_valid %>% st_difference(pc_lands)
+# p_landlines <- p_lands %>% st_cast("MULTILINESTRING")
+# private_cons_to_private <- st_intersection(treatments_join_private_cons_b, p_lands)
+#
+#
+# output <- treatments %>% filter(OBJECTID %in% c(private_cons_to_private$OBJECTID, private_to_private_cons$OBJECTID))
+#
+# test <- private_cons_to_private %>% filter(OBJECTID == 629) %>% st_buffer(-15)
+#
+# mapview(p_lands, col.regions = "yellow") +
+#   mapview(pc_lands, col.regions = "blue") +
+#   mapview(output, col.regions = "red") +
+#   mapview(test, col.regions = "hotpink")
+#
+#
+#
+#
+#
+# buffer_distance <- -15
+# # step 1. buffer treatments by a negative buffer_distance
+# treatments_buffered <- st_buffer(treatments, dist = buffer_distance)
+# # step 2. identify which *buffered* treatments intersect comap boundaries
+# treatments_comap <- st_join(treatments_buffered, comap_lines, st_intersection)
+# # id single poly xb treatments
+# treatments_comap_polys <- treatments_buffered %>%
+#   filter(OBJECTID %in% treatments_comap$OBJECTID)
+#
+# mapview(treatments_comap_polys) + mapview(comap_legend_lines)
+#
+# treatments <- treatments %>%
+#   mutate(single_poly_xb = case_when(
+#     OBJECTID %in% treatments_comap$OBJECTID ~ 1,
+#     .default = 0
+#   ))
+#
+#
+# trts_centroids_legend_join <- st_join(trts_centroids, comap_l, st_intersects)
+#
+# treatments_legend_join <- left_join(treatments,
+#                              trts_centroids_legend_join %>% select(OBJECTID, id) %>% st_drop_geometry,
+#                              by = "OBJECTID")
+#
+# # filter to private/private conservation only
+# treatments_private <- treatments_legend_join %>%
+#   filter(id %in% c(5, 6))
+#
+# # TODO fix edge case: one multipart polygon not assigned to comap region because
+# # part of it falls outside the county
+# mapview(comap_l, col.regions = "red") +
+#   mapview(treatments_legend_join[1607, ]) +
+#   mapview(trts_centroids_legend_join[1607, ])
+# treatments_legend_join$id[1607] <- 8
+#
+#
+# # id nearest neighbors
+#
+# treatments_private$closest_same_yr_OBJECTID_1 <- NULL
+# treatments_private$closest_same_yr_dist_1 <- NULL
+# treatments_private$closest_same_yr_OBJECTID_2 <- NULL
+# treatments_private$closest_same_yr_dist_2 <- NULL
+# treatments_private$closest_same_yr_OBJECTID_3 <- NULL
+# treatments_private$closest_same_yr_dist_3 <- NULL
+# treatments_private$closest_plus1_OBJECTID_1 <- NULL
+# treatments_private$closest_plus1_dist_1 <- NULL
+# treatments_private$closest_plus1_OBJECTID_2 <- NULL
+# treatments_private$closest_plus1_dist_2 <- NULL
+# treatments_private$closest_plus1_OBJECTID_3 <- NULL
+# treatments_private$closest_plus1_dist_3 <- NULL
+# treatments_private$closest_plus2_OBJECTID_1 <- NULL
+# treatments_private$closest_plus2_dist_1 <- NULL
+# treatments_private$closest_plus2_OBJECTID_2 <- NULL
+# treatments_private$closest_plus2_dist_2 <- NULL
+# treatments_private$closest_plus2_OBJECTID_3 <- NULL
+# treatments_private$closest_plus2_dist_3 <- NULL
+#
+#
+# tic()
+# for (i in 1:nrow(treatments_private)) {
+#   # i <- 1
+#   home_comap_poly <- treatments_private$id[i]
+#   target_trt <- treatments_private[i, ]
+#   target_yr <- target_trt$YEAR_COMP
+#
+#   filtered_same_yr <- treatments_private %>% filter(id != home_comap_poly,
+#                                                  YEAR_COMP == target_yr)
+#   filtered_plus1_yr <- treatments_private %>% filter(id != home_comap_poly,
+#                                                   YEAR_COMP == target_yr + 1 |
+#                                                     YEAR_COMP == target_yr - 1)
+#   filtered_plus2_yr <- treatments_private %>% filter(id != home_comap_poly,
+#                                                   YEAR_COMP == target_yr + 2 |
+#                                                     YEAR_COMP == target_yr - 2)
+#
+#   matches_yr <- nrow(filtered_same_yr)
+#   matches_plus1 <- nrow(filtered_plus1_yr)
+#   matches_plus2 <- nrow(filtered_plus2_yr)
+#
+#   if (matches_yr == 0) {
+#     treatments_private$closest_same_yr_OBJECTID_1[i] <- NA
+#     treatments_private$closest_same_yr_dist_1[i] <- NA
+#     treatments_private$closest_same_yr_OBJECTID_2[i] <- NA
+#     treatments_private$closest_same_yr_dist_2[i] <- NA
+#     treatments_private$closest_same_yr_OBJECTID_3[i] <- NA
+#     treatments_private$closest_same_yr_dist_3[i] <- NA
+#
+#   } else if (matches_yr > 0 && matches_yr < 3) {
+#     closest_n_same_yr <- st_nn(target_trt,
+#                                filtered_same_yr,
+#                                k = matches_yr,
+#                                returnDist = TRUE)
+#     # hacky way to return OIDs instead of row idx
+#     # TODO clean up
+#     closest_n_same_yr$nn[[1]] <- st_drop_geometry(filtered_same_yr[closest_n_same_yr$nn[[1]], "OBJECTID"])[[1]]
+#   } else {
+#     closest_n_same_yr <- st_nn(target_trt,
+#                                filtered_same_yr,
+#                                k = 3,
+#                                returnDist = TRUE)
+#     closest_n_same_yr$nn[[1]] <- st_drop_geometry(filtered_same_yr[closest_n_same_yr$nn[[1]], "OBJECTID"])[[1]]
+#   }
+#
+#   if (matches_plus1 == 0) {
+#     treatments_private$closest_plus1_OBJECTID_1[i] <- NA
+#     treatments_private$closest_plus1_dist_1[i] <- NA
+#     treatments_private$closest_plus1_OBJECTID_2[i] <- NA
+#     treatments_private$closest_plus1_dist_2[i] <- NA
+#     treatments_private$closest_plus1_OBJECTID_3[i] <- NA
+#     treatments_private$closest_plus1_dist_3[i] <- NA
+#   } else if (matches_plus1 > 0 && matches_plus1 < 3) {
+#     closest_n_plus1 <- st_nn(target_trt,
+#                              filtered_plus1_yr,
+#                              k = matches_plus1,
+#                              returnDist = TRUE)
+#     closest_n_plus1$nn[[1]] <- st_drop_geometry(filtered_plus1_yr[closest_n_plus1$nn[[1]], "OBJECTID"])[[1]]
+#   } else {
+#     closest_n_plus1 <- st_nn(target_trt,
+#                              filtered_plus1_yr,
+#                              k = 3,
+#                              returnDist = TRUE)
+#     closest_n_plus1$nn[[1]] <- st_drop_geometry(filtered_plus1_yr[closest_n_plus1$nn[[1]], "OBJECTID"])[[1]]
+#   }
+#
+#   if (matches_plus2 == 0) {
+#     treatments_private$closest_plus2_OBJECTID_1[i] <- NA
+#     treatments_private$closest_plus2_dist_1[i] <- NA
+#     treatments_private$closest_plus2_OBJECTID_2[i] <- NA
+#     treatments_private$closest_plus2_dist_2[i] <- NA
+#     treatments_private$closest_plus2_OBJECTID_3[i] <- NA
+#     treatments_private$closest_plus2_dist_3[i] <- NA
+#
+#   } else if (matches_plus2 > 0 && matches_plus2 < 3){
+#     closest_n_plus2 <- st_nn(target_trt,
+#                              filtered_plus2_yr,
+#                              k = matches_plus2,
+#                              returnDist = TRUE)
+#     closest_n_plus2$nn[[1]] <- st_drop_geometry(filtered_plus2_yr[closest_n_plus2$nn[[1]], "OBJECTID"])[[1]]
+#   } else {
+#     closest_n_plus2 <- st_nn(target_trt,
+#                              filtered_plus2_yr,
+#                              k = 3,
+#                              returnDist = TRUE)
+#     closest_n_plus2$nn[[1]] <- st_drop_geometry(filtered_plus2_yr[closest_n_plus2$nn[[1]], "OBJECTID"])[[1]]
+#   }
+#
+#   treatments_private$closest_same_yr_OBJECTID_1[i] <- NA
+#   try(treatments_private$closest_same_yr_OBJECTID_1[i] <- closest_n_same_yr$nn[[1]][[1]])
+#   treatments_private$closest_same_yr_dist_1[i] <- NA
+#   try(treatments_private$closest_same_yr_dist_1[i] <- closest_n_same_yr$dist[[1]][[1]])
+#   treatments_private$closest_same_yr_OBJECTID_2[i] <- NA
+#   try(treatments_private$closest_same_yr_OBJECTID_2[i] <- closest_n_same_yr$nn[[1]][[2]])
+#   treatments_private$closest_same_yr_dist_2[i] <- NA
+#   try(treatments_private$closest_same_yr_dist_2[i] <- closest_n_same_yr$dist[[1]][[2]])
+#   treatments_private$closest_same_yr_OBJECTID_3[i] <- NA
+#   try(treatments_private$closest_same_yr_OBJECTID_3[i] <- closest_n_same_yr$nn[[1]][[3]])
+#   treatments_private$closest_same_yr_dist_3[i] <- NA
+#   try(treatments_private$closest_same_yr_dist_3[i] <- closest_n_same_yr$dist[[1]][[3]])
+#
+#   treatments_private$closest_plus1_OBJECTID_1[i] <- NA
+#   try(treatments_private$closest_plus1_OBJECTID_1[i] <- closest_n_plus1$nn[[1]][[1]])
+#   treatments_private$closest_plus1_dist_1[i] <- NA
+#   try(treatments_private$closest_plus1_dist_1[i] <- closest_n_plus1$dist[[1]][[1]])
+#   treatments_private$closest_plus1_OBJECTID_2[i] <- NA
+#   try(treatments_private$closest_plus1_OBJECTID_2[i] <- closest_n_plus1$nn[[1]][[2]])
+#   treatments_private$closest_plus1_dist_2[i] <- NA
+#   try(treatments_private$closest_plus1_dist_2[i] <- closest_n_plus1$dist[[1]][[2]])
+#   treatments_private$closest_plus1_OBJECTID_3[i] <- NA
+#   try(treatments_private$closest_plus1_OBJECTID_3[i] <- closest_n_plus1$nn[[1]][[3]])
+#   treatments_private$closest_plus1_dist_3[i] <- NA
+#   try(treatments_private$closest_plus1_dist_3[i] <- closest_n_plus1$dist[[1]][[3]])
+#
+#   # TODO fix subscript out of bounds when matches > 0 && matches < 3
+#   treatments_private$closest_plus2_OBJECTID_1[i] <- closest_n_plus2$nn[[1]][[1]]
+#   treatments_private$closest_plus2_dist_1[i] <- closest_n_plus2$dist[[1]][[1]]
+#
+#   treatments_private$closest_plus2_OBJECTID_2[i] <- NA
+#   try(treatments_private$closest_plus2_OBJECTID_2[i] <- closest_n_plus2$nn[[1]][[2]])
+#   treatments_private$closest_plus2_OBJECTID_2[i] <- NA
+#   try(treatments_private$closest_plus2_OBJECTID_2[i] <- closest_n_plus2$nn[[1]][[2]])
+#   treatments_private$closest_plus2_dist_2[i] <- NA
+#   try(treatments_private$closest_plus2_dist_2[i] <- closest_n_plus2$dist[[1]][[2]])
+#   treatments_private$closest_plus2_OBJECTID_3[i] <- NA
+#   try(treatments_private$closest_plus2_OBJECTID_3[i] <- closest_n_plus2$nn[[1]][[3]])
+#   treatments_private$closest_plus2_dist_3[i] <- NA
+#   try(treatments_private$closest_plus2_dist_3[i] <- closest_n_plus2$dist[[1]][[3]])
+#
+#   print(i)
+# }
+# toc()
+#
+# # plots
+#
+# # graph: all data
+# treatments_private %>%
+#   pivot_longer(contains("_dist_"), names_to = "type", values_to = "distance") %>%
+#   mutate(
+#     year_slice = case_when(
+#       str_detect(type, "_same_yr_") ~ "same",
+#       str_detect(type, "_plus1_") ~ "plus1",
+#       str_detect(type, "_plus2_") ~ "plus2",
+#       .default = "ERROR"
+#     ),
+#     neighbor = case_when(
+#       str_detect(type, "_dist_1") ~ "first",
+#       str_detect(type, "_dist_2") ~ "second",
+#       str_detect(type, "_dist_3") ~ "third",
+#       .default = "ERROR_neighbor"
+#     )
+#   ) %>%
+#   ggplot(aes(x = distance, fill = neighbor)) +
+#   geom_histogram(alpha = 0.6, position = "dodge") +
+#   facet_wrap(~year_slice, nrow = 3) +
+#   scale_fill_manual(values = c("#162521", "#4F7CAC", "#C0E0DE")) +
+#   theme_minimal() +
+#   scale_x_continuous(breaks = scales::pretty_breaks(n = 14))
+#
+# # graph: less than 2.5 kms
+# treatments_private %>%
+#   pivot_longer(contains("_dist_"), names_to = "type", values_to = "distance") %>%
+#   mutate(
+#     year_slice = case_when(
+#       str_detect(type, "_same_yr_") ~ "same",
+#       str_detect(type, "_plus1_") ~ "plus1",
+#       str_detect(type, "_plus2_") ~ "plus2",
+#       .default = "ERROR"
+#     ),
+#     neighbor = case_when(
+#       str_detect(type, "_dist_1") ~ "first",
+#       str_detect(type, "_dist_2") ~ "second",
+#       str_detect(type, "_dist_3") ~ "third",
+#       .default = "ERROR_neighbor"
+#     )
+#   ) %>%
+#   filter(distance < 1200) %>%
+#   ggplot(aes(x = distance, fill = neighbor)) +
+#   geom_histogram(alpha = 0.6, position = "dodge") +
+#   facet_wrap(~year_slice, nrow = 3) +
+#   scale_fill_manual(values = c("#162521", "#4F7CAC", "#C0E0DE")) +
+#   theme_minimal() +
+#   scale_x_continuous(breaks = scales::pretty_breaks(n = 14))
+#
+# # map out some treatments where the neighbor is really close
+# potential_private_xb <- treatments_private %>%
+#   filter(closest_same_yr_dist_1 < 20 |
+#            closest_plus1_dist_1 < 20 |
+#            closest_plus2_dist_1 < 20)
+#
+# mapview(comap_legend_lines, color = "red") +
+#   mapview(potential_private_xb,
+#           zcol = "OBJECTID",
+#           col.regions =
+#             c(
+#               rep(hcl.colors(palette = "Dynamic", n = 5), 32),
+#               hcl.colors(palette = "Dynamic", n = 3)
+#             )
+#   )
+#
+#
