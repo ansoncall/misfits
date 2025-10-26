@@ -189,16 +189,46 @@ treatments_join_out <- treatments_join %>%
 potential_xb <- treatments_join_out %>%
   filter(if_any(contains("_dist"), \(x)  x < 20))
 
-treatments_xb <- treatments_join_out %>%
-  mutate(multi_poly_xb = case_when(
-    OBJECTID %in% potential_xb$OBJECTID ~ 1,
-    .default = 0
-  ),
-  any_xb = case_when(
-    single_poly_xb == 1 | multi_poly_xb == 1 ~ 1,
-    .default = 0
-  ))
+# to identify WHICH year slices the target treatment has matches in:
+same_year_xb <- treatments_join_out %>%
+  filter(if_any(contains("same_yr_dist"), \(x)  x < 20))
+plus1_year_xb <- treatments_join_out %>%
+  filter(if_any(contains("plus1_dist"), \(x)  x < 20))
+plus2_year_xb <- treatments_join_out %>%
+  filter(if_any(contains("plus2_dist"), \(x)  x < 20))
 
+treatments_xb <- treatments_join_out %>%
+  mutate(
+    # is the target xb by adjacency to another treatment in ANY year slice?
+    multi_poly_xb = case_when(OBJECTID %in% potential_xb$OBJECTID ~ 1,
+                              .default = 0),
+    # is the target xb by adjacency to another treatment in the same year?
+    xb_multi_0 = case_when(OBJECTID %in% same_year_xb$OBJECTID ~ 1,
+                           .default = 0),
+    # is the target xb by adjacency to another treatment in the +/-1 year slice?
+    xb_multi_1 = case_when(OBJECTID %in% plus1_year_xb$OBJECTID ~ 1,
+                           .default = 0),
+    # is the target xb by adjacency to another treatment in the +/-2 year slice?
+    xb_multi_2 = case_when(OBJECTID %in% plus2_year_xb$OBJECTID ~ 1,
+                           .default = 0),
+    # is the target xb on its own OR by adjacency with another treatment (any
+    # year)?
+    any_xb = case_when(single_poly_xb == 1 | multi_poly_xb == 1 ~ 1,
+                       .default = 0),
+    # if the target is xb by adjacency, what is the minimum year slice in which
+    # adjacency occurs? (not xb by adjacency in any year == NA). values assigned
+    # in order. If any target == TRUE for more than one condition, the value for
+    # the first TRUE condition is assigned.
+    xb_multi_any_min = case_when(OBJECTID %in% same_year_xb$OBJECTID ~ 0,
+                                 OBJECTID %in% plus1_year_xb$OBJECTID ~ 1,
+                                 OBJECTID %in% plus2_year_xb$OBJECTID ~ 2,
+                                 .default = NA),
+    # xb_multi_*_min: dummy variable for xb_multi_any_min. == 1 if that year
+    # slice is the MINIMUM year slice in which adjacency occurs.
+    xb_multi_0_min = if_else(xb_multi_any_min == 0, 1, 0, 0),
+    xb_multi_1_min = if_else(xb_multi_any_min == 1, 1, 0, 0),
+    xb_multi_2_min = if_else(xb_multi_any_min == 2, 1, 0, 0)
+  )
 
 # rename columns for clarity and brevity (.shp has 10-character limit for
 # attribute names). just explicitly name everything for clarity.
@@ -206,7 +236,7 @@ treatments_xb %>% glimpse
 
 out <- treatments_xb %>%
   rename(
-    OBJECTID = "OBJECTID",
+    OID_OLD = "OBJECTID",
     PRJ_NAME = "PRJ_NAME",
     AGENCY = "AGENCY",
     AGENCY_C = "AGENCY_C",
@@ -250,12 +280,17 @@ out <- treatments_xb %>%
     xb_single = "single_poly_xb",
     xb_multi = "multi_poly_xb",
     xb_any = "any_xb",
+    xb_m_0 = "xb_multi_0",
+    xb_m_1 = "xb_multi_1",
+    xb_m_2 = "xb_multi_2",
+    xb_m_min = "xb_multi_any_min",
+    xb_m_min_0 = "xb_multi_0_min",
+    xb_m_min_1 = "xb_multi_1_min",
+    xb_m_min_2 = "xb_multi_2_min",
     Shape = "Shape",
     Shape_Len = "Shape_Length",
     Shape_Area = "Shape_Area") %>%
-  # need to recreate unique id
-  # TODO investigate why the original OID isn't unique
-  mutate(OBJECTID = row_number(.), .before = everything()) %>%
+  # note: no OID created here, because that is created in st_write below
   # need to coerce aly POLYGON to MULTIPOLYGON for write out
   st_cast
 

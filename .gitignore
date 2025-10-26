@@ -59,7 +59,7 @@ images/*
 *.png
 
 # shapefiles/outputs
-.shp
-.csv
-.dbf
-.shx
+*.shp
+*.csv
+*.dbf
+*.shx
