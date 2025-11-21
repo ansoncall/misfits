@@ -11,6 +11,9 @@ t_f_summary <- df %>%
   group_by(Fireshed_I, xb_any) %>%
   summarize(n = n(),
             area = sum(SHAPE_Area)) # in map units (sq. meters)
+# this number is slightly inflated because some treatmens were cut in half by
+# the intersect:
+sum(t_f_summary$n)
 
 # number of treatments/treatment area in each fireshed, all treatment types
 f_summary <- df %>%
