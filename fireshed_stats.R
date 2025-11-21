@@ -22,7 +22,7 @@ f_summary <- df %>%
             area = sum(SHAPE_Area)) # in map units (sq. meters)
 
 # manager*fireshed stats ####
-df_c <- read_csv("raw/comap_firesheds_intersect.csv")
+df_c <- read_csv("raw/c_f_intersect.csv")
 names(df_c)
 
 f_summary2 <- df_c %>%
@@ -31,5 +31,12 @@ f_summary2 <- df_c %>%
 
 c_f_summary <- df_c %>%
   group_by(Fireshed_I, MANAGER_DETAIL) %>%
-  summarize(n_distinct_managers = n_distinct(MANAGER_DETAIL),
-            area_managed = sum(Shape_Area)) # in map units
+  summarize(area_managed = sum(Shape_Area)) # in map units
+
+# join summary outputs
+f_summary <- full_join(f_summary, f_summary2, by = "Fireshed_I") %>%
+  rename(n_treatments = n)
+
+f_summary
+t_f_summary # note: rows may be absent if there are no xb_any trts in a fireshed
+c_f_summary
