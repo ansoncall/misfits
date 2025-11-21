@@ -40,3 +40,10 @@ f_summary <- full_join(f_summary, f_summary2, by = "Fireshed_I") %>%
 f_summary
 t_f_summary # note: rows may be absent if there are no xb_any trts in a fireshed
 c_f_summary
+
+for (i in c("f_summary", "t_f_summary", "c_f_summary")) {
+  write_csv(
+    get(i),                # gets the actual object
+    paste0("out/", i, ".csv")      # uses the name as a string
+  )
+}
