@@ -81,5 +81,15 @@ treatments_joined %>% filter(Fireshed_I == 2257 & xb_no == 1) %>%
 treatments_joined %>% filter(Fireshed_I == 2257 & xb_single == 1) %>%
   summarize(area= sum(area))
 
-# looks good. export
+# looks good, but need to drop one meaningless col and rearrange
+treatment_summary_wide <- treatment_summary_wide %>%
+  select(Fireshed_I, Fireshed_N, total_area, xb_no, xb_any, xb_single, xb_multi,
+         xb_m_0,
+         xb_m_1,
+         xb_m_2,
+         xb_m_min_0,
+         xb_m_min_1,
+         xb_m_min_2,
+         )
 write_csv(treatment_summary_wide, "treatments_by_fireshed.csv")
+
